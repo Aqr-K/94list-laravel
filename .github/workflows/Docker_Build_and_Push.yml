@@ -108,18 +108,20 @@ jobs:
           fi
           
       # 手动触发-创建 tag 
-      - name: Create Version_Name
-        id: create_version_name
+      - name: Create Version_Tag
+        id: create_version_tag
         if: github.event_name == 'workflow_dispatch'
         run: |
           echo "tag=${{ ! github.event.inputs.version == 'none' && env.inputs_version || env.env_version }}${{ ! github.event.inputs.pre-release == '0' && env.inputs_pre-tag }}" >> $GITHUB_ENV
+          echo "${{ env.tag }}"
 
       # 自动触发-创建 tag
-      - name: Actions_Create Version_Name
-        id: actions_create_version_name
+      - name: Actions_Create Version_Tag
+        id: actions_create_version_tag
         if: github.event_name != 'workflow_dispatch'
         run: |
           echo "tag=${{ env.env_version }}" >> $GITHUB_ENV
+          echo "${{ env.tag }}"
           
     # 输出参数
     outputs:
@@ -143,9 +145,9 @@ jobs:
           password: ${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}
 
       # 手动触发-构建并推送 版本 镜像
-      - name: Build and push version
+      - name: Build and push to version
         uses: docker/build-push-action@v2
-        id: build_and_push_version
+        id: build_and_push_to_version
         if: github.event_name == 'workflow_dispatch'
         with:
           push: true
@@ -154,9 +156,9 @@ jobs:
             ${{ secrets.DOCKER_HUB_USERNAME }}/94list-laravel:${{ needs.Create_Image_Tag.outputs.tag }}
             
        # 手动触发-构建并推送 latest 镜像
-      - name: Build and push to Docker-Hub
+      - name: Build and push to latest
         uses: docker/build-push-action@v2
-        id: build_and_push_latest
+        id: build_and_push_to_latest
         if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.pre-release == '0' }}
         with:
           push: true
@@ -164,9 +166,9 @@ jobs:
           tags: ${{ secrets.DOCKER_HUB_USERNAME }}/94list-laravel:latest
 
       # 自动触发-构建并推送 版本 镜像
-      - name: Action Build and push version
+      - name: Action Build and push to version
         uses: docker/build-push-action@v2
-        id: action_build_and_push_version
+        id: action_build_and_push_to_version
         if: github.event_name != 'workflow_dispatch'
         with:
           push: true
@@ -175,9 +177,9 @@ jobs:
             ${{ secrets.DOCKER_HUB_USERNAME }}/94list-laravel:${{ needs.Create_Image_Tag.outputs.tag }}
             
        # 自动触发-构建并推送 latest 镜像
-      - name: Action Build and push to Docker-Hub
+      - name: Action Build and push to latest
         uses: docker/build-push-action@v2
-        id: action_build_and_push_latest
+        id: action_build_and_push_to_latest
         if: github.event_name != 'workflow_dispatch'
         with:
           push: true
