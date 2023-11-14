@@ -112,7 +112,7 @@ jobs:
         id: create_version_tag
         if: github.event_name == 'workflow_dispatch'
         run: |
-          echo "tag=${{ ! github.event.inputs.version == 'none' && env.inputs_version || env.env_version }}${{ ! github.event.inputs.pre-release == '0' && env.inputs_pre-tag }}" >> $GITHUB_ENV
+          echo "tag=${{ github.event.inputs.version == 'none' && env.env_version || env.inputs_version }}${{ ! github.event.inputs.pre-release == '0' && env.inputs_pre-tag }}" >> $GITHUB_ENV
           echo "${{ env.tag }}"
 
       # 自动触发-创建 tag
