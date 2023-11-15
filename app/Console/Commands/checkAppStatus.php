@@ -2,9 +2,9 @@
 
 namespace App\Console\Commands;
 
-use App\Http\Controllers\AdminController;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\File;
+use Illuminate\Support\Str;
 
 class checkAppStatus extends Command
 {
@@ -35,21 +35,49 @@ class checkAppStatus extends Command
 
     public function getEnvFile($envPath)
     {
-        return collect(file($envPath, FILE_IGNORE_NEW_LINES))
-            ->filter(fn($item) => $item !== '' && !str_starts_with($item, '#'))
-            ->map(fn($item) => explode('=', $item, 2))
-            ->mapWithKeys(fn(array $item) => [$item[0] => $item[1]]);
+        return collect(explode("\n", File::get($envPath)))
+            ->map(function ($item) {
+                if ($item === '') return ["break" . Str::random(), $item];
+                if (str_starts_with($item, '#')) return [$item, $item];
+                return explode('=', $item, 2);
+            })
+            ->mapWithKeys(fn($item) => [$item[0] => $item[1]]);
     }
 
-    public function fixDotEnvFile($newEnvPath, $oldEnvPath): void
+    public function fixDotEnvFile($oldEnvPath, $newEnvPath): void
     {
-        $newEnv = $this->getEnvFile($newEnvPath);
         $oldEnv = $this->getEnvFile($oldEnvPath);
+        $newEnv = $this->getEnvFile($newEnvPath);
 
-        $diff   = $newEnv->diffKeys($oldEnv);
-        $nowEnv = $oldEnv->merge($diff->all())->map(fn($value, $key) => $key . '=' . $value);
+        foreach ($newEnv as $key => $value) {
+            if (isset($oldEnv[$key])) {
+                $newEnv[$key] = $oldEnv[$key];
+            }
+        }
 
-        $content = implode("\n", $nowEnv->toArray());
+        // 检查新配置文件是否有缺少的参数
+        $oldEnvs = [];
+        foreach ($oldEnv as $key => $value) {
+            if (!str_starts_with($key, "break") && !isset($newEnv[$key])) {
+                $oldEnvs[$key] = $value;
+            }
+        }
+
+        $newEnv = collect([
+            ...$newEnv,
+            "break" . Str::random() => "",
+            "# 未分类"              => "# 未分类",
+            ...$oldEnvs
+        ]);
+
+        $newEnv = $newEnv
+            ->map(function ($value, $key) {
+                if (str_starts_with($key, "break") || str_starts_with($key, "#")) return $value;
+                return $key . '=' . $value;
+            })
+            ->toArray();
+
+        $content = implode("\n", $newEnv);
         File::put($oldEnvPath, $content);
     }
 
@@ -138,14 +166,16 @@ class checkAppStatus extends Command
     {
         $this->info('开始检查是否更新');
 
+        dd($this->fixDotEnvFile(base_path() . '/.env', base_path() . '/.env.example'));
+
         # 各项文件夹目录与配置文件的名称
         $local_html_path  = "/var/www/html";
         $old_html_path    = "/var/www/html_old";
         $latest_html_path = "/var/www/94list-laravel";
-        $env_name         = ".env";
+
         # 生成.env文件的路径
-        $local_env_path  = $local_html_path . "/" . $env_name;
-        $latest_env_path = $latest_html_path . "/" . $env_name;
+        $local_env_path  = $local_html_path . "/.env";
+        $latest_env_path = $latest_html_path . "/.env.example";
 
         $local_version  = $this->getVersionString($local_env_path);
         $latest_version = $this->getVersionString($latest_env_path);
@@ -166,7 +196,7 @@ class checkAppStatus extends Command
         $this->info("本地版本低于容器版本，开始更新");
 
         # 创建版本文件夹
-        $this->info("开始创建版本文件夹");
+        $this->info("开始备份当前版本");
         $bakPath = $old_html_path . '/' . $local_version;
         if (!file_exists($bakPath)) {
             $this->dir_mkdir($bakPath);
@@ -174,18 +204,13 @@ class checkAppStatus extends Command
             $this->warn($bakPath . "已存在，清空文件夹并开始重新备份");
             $this->dir_del($bakPath, true);
         }
-        $this->info("完成创建版本文件夹");
-
-        # 备份老版本源码
-        $this->info("开始备份老版本");
         $this->dir_copy($local_html_path, $bakPath);
-        $this->info("完成备份老版本");
+        $this->info("完成备份当前版本");
 
         # 复制新版本源码
         $this->info("开始导入容器版本源码");
         # 清空 html 下所有内容
         $this->dir_del($local_html_path);
-        $this->dir_mkdir($local_html_path);
         $this->dir_copy($latest_html_path, $local_html_path);
         $this->info("完成导入容器版本源码");
 
@@ -199,13 +224,9 @@ class checkAppStatus extends Command
         }
 
         # 更新版本号
-        $bakEnvPath = $bakPath . '/' . $env_name;
         unlink($local_env_path);
-        copy($bakEnvPath, $local_env_path);
-        $this->fixDotEnvFile($latest_env_path, $local_env_path);
-        AdminController::modifyEnv([
-            '_94LIST_VERSION' => $latest_version
-        ], $local_env_path);
+        copy($bakPath . "/.env", $local_env_path);
+        $this->fixDotEnvFile($local_env_path, $latest_env_path);
 
         # 重建文件锁
         $this->info("重建文件锁");
