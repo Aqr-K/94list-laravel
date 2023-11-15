@@ -1,0 +1,317 @@
+name: Release_Branch
+
+on:
+  # 手动触发
+  workflow_dispatch:
+    inputs:
+      # 版本
+      version:
+        # 留空时自动获取.env内版本号
+        description: '版本号（"none"为自动获取）'
+        required: false
+        default: 'none'
+      # pr标记
+      pre-release:
+        description: 'Pre预发布（"0"为"false"，"1"为"true"）'
+        required: true
+        default: '0'
+      # pr后缀
+      pre-tag:
+        # 留空时自动获取.env内版本号
+        description: 'Pre额外后缀（需要开启"Pre预发布"）'
+        required: false
+        default: 'none'
+      # 草稿模式
+      draft:
+        description: '草稿模式（"0"为"false"，"1"为"true"）'
+        required: true
+        default: '0'
+
+  # 当 CHANGELOG.md 更新时自动触发
+  push:
+    paths:
+      - 'CHANGELOG.md'
+
+  # 测试模拟自动触发
+  #watch:
+  #  types: [started]
+
+
+jobs:
+
+  Release_Branch:
+    name: Release Branch
+    runs-on: ubuntu-latest
+    # 环境名
+    environment: release
+    steps:
+      # 读取项目源码
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      # 从 .env 中提取版本号
+      - name: Read _94LIST_VERSION from .env file
+        id: env_version
+        run: echo "_94LIST_VERSION=$(grep '_94LIST_VERSION=' .env | cut -d '=' -f 2)" >> $GITHUB_ENV
+
+      # 识别 .env 版本号开头是否带v
+      - name: Check _94LIST_VERSION prefix
+        id: check_prefix
+        run: |
+          if [[ ${{ env._94LIST_VERSION }} =~ ^[vV].* ]]; then
+            echo "env_version=${{ env._94LIST_VERSION }}" >> $GITHUB_ENV
+          else
+            echo "env_version=v${{ env._94LIST_VERSION }}" >> $GITHUB_ENV
+          fi
+          
+      # 手动触发-识别 inputs.version 版本号开头是否带v
+      - name: Check inputs.version prefix
+        id: check_inputs_version
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          # 不为空时
+          if [[ ! ${{ github.event.inputs.version }} = 'none' ]]; then
+            # 开头带v或V
+            if [[ ${{ github.event.inputs.version }} =~ ^[vV].* ]]; then
+              echo "inputs_version=${{ github.event.inputs.version }}" >> $GITHUB_ENV
+            # 开头不带v或V
+            else
+              echo "inputs_version=v${{ github.event.inputs.version }}" >> $GITHUB_ENV
+            fi  
+          # 为空时
+          else
+            echo "inputs_version=" >> $GITHUB_ENV
+          fi  
+          
+      # 手动触发-识别 inputs.pre-release 的值
+      - name: check inputs.pre-release
+        id: check_inputs_pre-release
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          if [[ ${{ github.event.inputs.pre-release }} = '1' ]]; then
+            echo "inputs_pre-release=true" >> $GITHUB_ENV
+          else
+            echo "inputs_pre-release=false" >> $GITHUB_ENV
+          fi
+          
+      # 手动触发- inputs.draft 的值
+      - name: check inputs.draft
+        id: check_inputs_draft
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          if [[ ${{ github.event.inputs.draft }} = '1' ]]; then
+            echo "inputs_draft=true" >> $GITHUB_ENV
+          else
+            echo "inputs_draft=false" >> $GITHUB_ENV
+          fi
+          
+      # 手动触发-识别 pre-tag 的值
+      - name: check inputs.pre-tag
+        id: check_inputs_pre-tag
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          # pre开启时
+          if [[ ${{ github.event.inputs.pre-release }} = '1' ]]; then
+            # 不为空时
+            if [[ ! ${{ github.event.inputs.pre-tag }} = 'none' ]]; then
+              # 有前缀pre时
+              if [[ ${{ github.event.inputs.pre-tag }} =~ ^[pP][rR][eE].* ]]; then
+                echo "inputs_pre-tag=-${{ github.event.inputs.pre-tag }}" >> $GITHUB_ENV
+              # 无前缀pre时  
+              else
+                echo "inputs_pre-tag=-pre-${{ github.event.inputs.pre-tag }}" >> $GITHUB_ENV
+              fi
+            # 为空时
+            else
+              echo "inputs_pre-tag=-pre" >> $GITHUB_ENV
+            fi
+          # pre未开启时
+          else
+              echo "inputs_pre-tag=" >> $GITHUB_ENV
+          fi
+          
+      # 手动触发-创建 tag
+      - name: Create Version_tag
+        id: create_version_tag
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          echo "tag=${{ github.event.inputs.version == 'none' && env.env_version || env.inputs_version }}${{ ! github.event.inputs.pre-release == '0' && env.inputs_pre-tag }}" >> $GITHUB_ENV
+          
+      # 自动触发-创建 tag
+      - name: Action Create Version_tag
+        id: action_create_version_tag
+        if: github.event_name != 'workflow_dispatch'
+        run: |
+          echo "tag=${{ env.env_version }}" >> $GITHUB_ENV
+          
+      # 从 CHANGELOG.md 中提取对应版本日志
+      - name: Extract version log from CHANGELOG.md
+        id: changelog
+        run: |
+          # 使用 sed 在版本号和下一个标题之间提取日志
+          LOG=$(sed -n "/^###.*${{ env.version_tag }}$/,/^###/p" CHANGELOG.md | sed '1d;$d')
+          # 转义 JSON 中的换行符和其他特殊字符
+          LOG="${LOG//'%'/'%25'}"
+          LOG="${LOG//$'\n'/'%0A'}"
+          LOG="${LOG//$'\r'/'%0D'}"
+          # 设置输出变量
+          # 方法1
+          echo "::set-output name=body::$LOG"
+          # 方法2：有个换行符乱码
+          # echo "$LOG" > temp.txt
+          # echo "changelog=$PWD/temp.txt" >> $GITHUB_ENV
+          
+      # 手动触发-开始设置发布内容
+      - name: Create release
+        id: create_release
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
+        with:
+          tag_name: ${{ env.tag }}
+          release_name: ${{ env.tag }}
+          prerelease: ${{ env.inputs_pre-release }}
+          draft: ${{ env.inputs_draft }}
+          # 描述
+          # 方法1
+          body: ${{ steps.changelog.outputs.body }}
+          # 方法2：一个换行符乱码
+          # body_path: ${{ env.changelog }}
+          
+      # 自动触发-开始设置发布内容
+      - name: Action Create release
+        id: action_create_release
+        if: github.event_name != 'workflow_dispatch'
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
+        with:
+          tag_name: ${{ env.tag }}
+          release_name: ${{ env.tag }}
+          prerelease: false
+          draft: false
+          # 描述
+          # 方法1
+          body: ${{ steps.changelog.outputs.body }}
+          # 方法2：一个换行符乱码
+          # body_path: ${{ env.changelog }}
+
+    # 输出参数
+    outputs:
+      upload_url: ${{ steps.create_release.outputs.upload_url || steps.action_create_release.outputs.upload_url }}
+      version_tag: ${{ env.tag }}
+
+  Build_tar_package:
+    name: Build Tar Package
+    runs-on: ubuntu-latest
+    # 环境名
+    environment: release
+    needs: Release_Branch
+    steps:
+      # 读取项目源码
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      # 生成 tar.gz 格式包
+      - name: Tar release package
+        run: sudo tar -czvf ../94list-laravel_${{ needs.Release_Branch.outputs.version_tag }}.tar.gz .
+
+      # 上传发布的包体
+      - name: Upload release asset
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
+        with:
+          upload_url: ${{ needs.Release_Branch.outputs.upload_url }}
+          asset_path: ../94list-laravel_${{ needs.Release_Branch.outputs.version_tag }}.tar.gz
+          asset_name: 94list-laravel_${{ needs.Release_Branch.outputs.version_tag }}.tar.gz
+          asset_content_type: application/gzip
+
+  Build_zip_package:
+    name: Build Zip Package
+    runs-on: ubuntu-latest
+    # 环境名
+    environment: release
+    # 引用Release_Branch任务的输出参数
+    needs: Release_Branch
+    steps:
+      # 读取项目源码
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      # 生成 zip 格式包
+      - name: Zip release package
+        run: sudo zip -r ../94list-laravel_${{ needs.Release_Branch.outputs.version_tag }}.zip .
+
+      # 上传发布的包体
+      - name: Upload release asset
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
+        with:
+          upload_url: ${{ needs.Release_Branch.outputs.upload_url }}
+          asset_path: ../94list-laravel_${{ needs.Release_Branch.outputs.version_tag }}.zip
+          asset_name: 94list-laravel_${{ needs.Release_Branch.outputs.version_tag }}.zip
+          asset_content_type: application/zip
+
+  Build_composer_tar_package:
+    name: Build Composer Tar Package
+    runs-on: ubuntu-latest
+    # 环境名
+    environment: release
+    needs: Release_Branch
+    steps:
+      # 读取项目源码
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      # 使用 composer 安装依赖
+      - name: Install dependencies with composer
+        run:  composer install --optimize-autoloader --no-interaction --no-progress
+
+      # 生成 tar.gz 格式包
+      - name: Tar release package
+        run: sudo tar -czvf ../94list-laravel_composer_${{ needs.Release_Branch.outputs.version_tag }}.tar.gz .
+
+      # 上传发布的包体
+      - name: Upload release asset
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
+        with:
+          upload_url: ${{ needs.Release_Branch.outputs.upload_url }}
+          asset_path: ../94list-laravel_composer_${{ needs.Release_Branch.outputs.version_tag }}.tar.gz
+          asset_name: 94list-laravel_composer_${{ needs.Release_Branch.outputs.version_tag }}.tar.gz
+          asset_content_type: application/gzip
+
+  Build_composer_zip_package:
+    name: Build Composer Zip Package
+    runs-on: ubuntu-latest
+    # 环境名
+    environment: release
+    # 引用Release_Branch任务的输出参数
+    needs: Release_Branch
+    steps:
+      # 读取项目源码
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      # 使用 composer 安装依赖
+      - name: Install dependencies with composer
+        run:  composer install --optimize-autoloader --no-interaction --no-progress
+
+      # 生成 zip 格式包
+      - name: Zip release package
+        run: sudo zip -r ../94list-laravel_composer_${{ needs.Release_Branch.outputs.version_tag }}.zip .
+
+      # 上传发布的包体
+      - name: Upload release asset
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
+        with:
+          upload_url: ${{ needs.Release_Branch.outputs.upload_url }}
+          asset_path: ../94list-laravel_composer_${{ needs.Release_Branch.outputs.version_tag }}.zip
+          asset_name: 94list-laravel_composer_${{ needs.Release_Branch.outputs.version_tag }}.zip
+          asset_content_type: application/zip
