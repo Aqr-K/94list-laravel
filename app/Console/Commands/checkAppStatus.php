@@ -2,7 +2,6 @@
 
 namespace App\Console\Commands;
 
-use App\Http\Controllers\AdminController;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Str;
@@ -55,6 +54,21 @@ class checkAppStatus extends Command
                 $newEnv[$key] = $oldEnv[$key];
             }
         }
+
+        // 检查新配置文件是否有缺少的参数
+        $oldEnvs = [];
+        foreach ($oldEnv as $key => $value) {
+            if (!str_starts_with($key, "break") && !isset($newEnv[$key])) {
+                $oldEnvs[$key] = $value;
+            }
+        }
+
+        $newEnv = collect([
+            ...$newEnv,
+            "break" . Str::random() => "",
+            "# 未分类"              => "# 未分类",
+            ...$oldEnvs
+        ]);
 
         $newEnv = $newEnv
             ->map(function ($value, $key) {
@@ -152,6 +166,8 @@ class checkAppStatus extends Command
     {
         $this->info('开始检查是否更新');
 
+        dd($this->fixDotEnvFile(base_path() . '/.env', base_path() . '/.env.example'));
+
         # 各项文件夹目录与配置文件的名称
         $local_html_path  = "/var/www/html";
         $old_html_path    = "/var/www/html_old";
@@ -211,9 +227,6 @@ class checkAppStatus extends Command
         unlink($local_env_path);
         copy($bakPath . "/.env", $local_env_path);
         $this->fixDotEnvFile($local_env_path, $latest_env_path);
-        AdminController::modifyEnv([
-            '_94LIST_VERSION' => $latest_version
-        ], $local_env_path);
 
         # 重建文件锁
         $this->info("重建文件锁");
