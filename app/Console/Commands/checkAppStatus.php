@@ -166,8 +166,6 @@ class checkAppStatus extends Command
     {
         $this->info('开始检查是否更新');
 
-        dd($this->fixDotEnvFile(base_path() . '/.env', base_path() . '/.env.example'));
-
         # 各项文件夹目录与配置文件的名称
         $local_html_path  = "/var/www/html";
         $old_html_path    = "/var/www/html_old";
