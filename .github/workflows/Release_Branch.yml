@@ -28,9 +28,9 @@ on:
         default: '0'
 
   # 当 CHANGELOG.md 更新时自动触发
-  push:
-    paths:
-      - 'CHANGELOG.md'
+  #push:
+  #  paths:
+  #    - 'CHANGELOG.md'
 
   # 测试模拟自动触发
   #watch:
