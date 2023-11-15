@@ -149,7 +149,7 @@ jobs:
         id: changelog
         run: |
           # 使用 sed 在版本号和下一个标题之间提取日志
-          LOG=$(sed -n "/^###.*${{ env.version_tag }}$/,/^###/p" CHANGELOG.md | sed '1d;$d')
+          LOG=$(sed -n "/^###.*${{ env.tag }}$/,/^###/p" CHANGELOG.md | sed '1d;$d')
           # 转义 JSON 中的换行符和其他特殊字符
           LOG="${LOG//'%'/'%25'}"
           LOG="${LOG//$'\n'/'%0A'}"
