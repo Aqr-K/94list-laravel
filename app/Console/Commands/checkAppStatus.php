@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands;
 
+use App\Http\Controllers\AdminController;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Str;
@@ -225,6 +226,9 @@ class checkAppStatus extends Command
         unlink($local_env_path);
         copy($bakPath . "/.env", $local_env_path);
         $this->fixDotEnvFile($local_env_path, $latest_env_path);
+        AdminController::modifyEnv([
+            '_94LIST_VERSION' => $latest_version
+        ], $local_env_path);
 
         # 重建文件锁
         $this->info("重建文件锁");
