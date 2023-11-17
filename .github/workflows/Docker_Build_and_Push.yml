@@ -1,0 +1,190 @@
+name: Docker_Build_and_Push
+
+on:
+  # 手动触发
+  workflow_dispatch:
+    inputs:
+      # 版本
+      version:
+        # 留空时自动获取.env内版本号
+        description: '版本号（"none"为自动获取）'
+        required: false
+        default: 'none'
+      # pr标记
+      pre-release:
+        description: 'Pre版本开关（"0"为"false"，"1"为"true"）'
+        required: true
+        default: '0'
+      # pr后缀
+      pre-tag:
+        # 留空时自动获取.env内版本号
+        description: 'Pre额外后缀（需要开启"Pre版本开关"）'
+        required: false
+        default: 'none'
+
+  # 自动触发
+  #workflow_run:
+   # workflows: 
+      # 指定要监听的工作流的名称
+    #  - Release_Branch
+    #types: 
+    #  - completed
+    #branches: 
+      # 指定要监听的分支
+    #  - dev 
+
+# 保证同一时间只运行一个本工作流
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+
+  Create_Image_Tag:
+    runs-on: ubuntu-latest
+    name: Create Image and Tag
+    steps:
+      # 读取源码
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # 从 .env 中提取版本号
+      - name: Release version from .env file
+        id: release_version
+        run: |
+          echo "_94LIST_VERSION=$(grep '_94LIST_VERSION=' .env | cut -d '=' -f 2)" >> $GITHUB_ENV && \
+          if [[ ${{ env._94LIST_VERSION }} =~ ^[vV].* ]]; then
+            echo "env_version=${{ env._94LIST_VERSION }}" >> $GITHUB_ENV
+          else
+            echo "env_version=v${{ env._94LIST_VERSION }}" >> $GITHUB_ENV
+          fi
+          
+      # 手动触发-识别 inputs.version 版本号开头，并修改
+      - name: Check inputs.version prefix
+        id: check_inputs_version
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          # 不为空时
+          if [[ ! ${{ github.event.inputs.version }} = 'none' ]]; then
+            # 带v
+            if [[ ${{ github.event.inputs.version }} =~ ^[vV].* ]]; then
+              echo "inputs_version=${{ github.event.inputs.version }}" >> $GITHUB_ENV
+            # 不带v
+            else
+              echo "inputs_version=v${{ github.event.inputs.version }}" >> $GITHUB_ENV
+            fi
+          # 为空时
+          else
+            echo "inputs_version=" >> $GITHUB_ENV
+          fi
+          
+      # 手动触发-识别 pre-tag 的值，并修改
+      - name: check inputs.pre-tag
+        id: check_inputs_pre-tag
+        if: ${{ github.event_name == 'workflow_dispatch' &&  github.event.inputs.pre-release == '1' }}
+        run: |
+          # pr开启时
+          if [[ ${{ github.event.inputs.pre-release }} = '1' ]]; then
+            # 不为空时
+            if [[ ! ${{ github.event.inputs.pre-tag }} = 'none' ]]; then
+              # 有前缀pre时
+              if [[ ${{ github.event.inputs.pre-tag }} =~ ^[pP][rR][eE].* ]]; then
+                echo "inputs_pre-tag=-${{ github.event.inputs.pre-tag }}" >> $GITHUB_ENV
+              # 无前缀pre时
+              else
+                echo "inputs_pre-tag=-pre-${{ github.event.inputs.pre-tag }}" >> $GITHUB_ENV
+              fi
+            # 为空时 
+            else
+              echo "inputs_pre-tag=-pre" >> $GITHUB_ENV
+            fi
+          # 不开启时
+          else
+            echo "inputs_pre-tag=" >> $GITHUB_ENV
+          fi
+          
+      # 手动触发-创建 tag 
+      - name: Create Version_Tag
+        id: create_version_tag
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          echo "tag=${{ github.event.inputs.version == 'none' && env.env_version || env.inputs_version }}${{ ! github.event.inputs.pre-release == '0' && env.inputs_pre-tag }}" >> $GITHUB_ENV
+          echo "${{ env.tag }}"
+      # 自动触发-创建 tag
+      - name: Actions_Create Version_Tag
+        id: actions_create_version_tag
+        if: github.event_name != 'workflow_dispatch'
+        run: |
+          echo "tag=${{ env.env_version }}" >> $GITHUB_ENV
+          echo "${{ env.tag }}"
+          
+    # 输出参数
+    outputs:
+      tag: ${{ env.tag }}
+
+
+  # 构建并推送镜像到Docker Hub
+  docker-hub:
+    name: Build docker and push to docker-hub
+    needs: Create_Image_Tag
+    runs-on: ubuntu-latest
+    # 环境名
+    environment: docker
+    steps:
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # 登录到Docker Hub
+      - name: Login to Docker-Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_HUB_USERNAME }}
+          password: ${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}
+
+      # 手动触发-构建并推送 版本 镜像
+      - name: Build and push to version
+        uses: docker/build-push-action@v5
+        id: build_and_push_to_version
+        if: github.event_name == 'workflow_dispatch'
+        with:
+          push: true
+          file: ./Dockerfile
+          tags: |
+            ${{ secrets.DOCKER_HUB_USERNAME }}/94list-laravel:${{ needs.Create_Image_Tag.outputs.tag }}
+            
+       # 手动触发-构建并推送 latest 镜像
+      - name: Build and push to latest
+        uses: docker/build-push-action@v2
+        id: build_and_push_to_latest
+        if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.pre-release == '0' }}
+        with:
+          push: true
+          file: ./Dockerfile
+          tags: ${{ secrets.DOCKER_HUB_USERNAME }}/94list-laravel:latest
+
+      # 自动触发-构建并推送 版本 镜像
+      - name: Action Build and push to version
+        uses: docker/build-push-action@v2
+        id: action_build_and_push_to_version
+        if: github.event_name != 'workflow_dispatch'
+        with:
+          push: true
+          file: ./Dockerfile
+          tags: |
+            ${{ secrets.DOCKER_HUB_USERNAME }}/94list-laravel:${{ needs.Create_Image_Tag.outputs.tag }}
+            
+       # 自动触发-构建并推送 latest 镜像
+      - name: Action Build and push to latest
+        uses: docker/build-push-action@v2
+        id: action_build_and_push_to_latest
+        if: github.event_name != 'workflow_dispatch'
+        with:
+          platforms: |
+            linux/amd64
+          push: true
+          file: ./Dockerfile
+          tags: ${{ secrets.DOCKER_HUB_USERNAME }}/94list-laravel:latest
